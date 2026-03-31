@@ -23,8 +23,7 @@
 ├── app_area_frequency_calc.c
 ├── app_area_frequency_calc.h
 └── tests
-    ├── Serial-COM22_03_11_15_16-025021800033成功.log
-    ├── Serial-COM7_03_11_15_16-025021800021错误.log
+    ├── DATA0000.TXT
     ├── bin
     │   ├── app_area_frequency_calc_single
     │   └── period_cmp_records.txt
@@ -43,8 +42,8 @@
 | `app_area_frequency_calc.c` | 核心算法实现文件，包含频率换算、频差记录和归属 CCO 选择逻辑。 |
 | `tests/` | 测试与样例数据目录，包含日志样例、抽取脚本和测试入口。 |
 | `tests/test.sh` | 一键测试脚本，负责串联“日志抽取 -> 编译测试程序 -> 回放验证”。 |
-| `tests/extract_period_cmp_records.py` | 从串口日志中提取 `period_cmp` 记录并转换成测试输入格式的脚本。 |
-| `tests/Serial-*.log` | 测试使用的串口日志样例，分别用于成功/异常场景验证。 |
+| `tests/extract_period_cmp_records.py` | 从串口日志中提取 `area_record_frequency_diff params:` 参数块并转换成测试输入格式的脚本。 |
+| `tests/DATA0000.TXT` | 当前默认测试日志样例，包含 `CcoMac`、`CcoData`、`StaData` 形式的参数块。 |
 | `tests/bin/` | 测试过程生成或使用的中间产物目录，例如抽取结果和测试可执行文件。 |
 | `tests/编码规范.md` | 测试目录下的补充说明文档，不参与算法执行。 |
 
