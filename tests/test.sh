@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python3 ./extract_period_cmp_records.py ./Serial-COM7_03_11_15_16-025021800021错误.log -o ./bin/period_cmp_records.txt 
+python3 ./extract_period_cmp_records.py ./DATA0000.TXT -o ./bin/period_cmp_records.txt 
 
 set -euo pipefail
 
@@ -12,7 +12,7 @@ SOURCE_FILE="${TEST_ROOT}/../app_area_frequency_calc.c"
 OUTPUT_BIN="${BUILD_DIR}/app_area_frequency_calc_single"
 RUN_BIN="/tmp/app_area_frequency_calc_single"
 EXTRACT_SCRIPT="${TEST_ROOT}/extract_period_cmp_records.py"
-INPUT_LOG="${TEST_ROOT}/Serial-COM7_03_11_15_16-025021800021错误.log"
+INPUT_LOG="${TEST_ROOT}/DATA0000.TXT"
 EXTRACT_OUTPUT="${BUILD_DIR}/period_cmp_records.txt"
 
 mkdir -p "${BUILD_DIR}"

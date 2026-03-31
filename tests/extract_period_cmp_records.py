@@ -6,18 +6,18 @@ import re
 import sys
 from pathlib import Path
 
-RECORD_PATTERN = re.compile(
-    r"period_cmp .*?cco=(?P<cco_mac>\d{12}) "
-    r".*?ccodata_num=(?P<cco_count>\d+) "
-    r"ccodata=\[(?P<cco_data>[^\]]*)\] "
-    r"stadata_num=(?P<sta_count>\d+) "
-    r"stadata=\[(?P<sta_data>[^\]]*)\]"
+BLOCK_MARKER = "area_record_frequency_diff params:"
+CCO_MAC_PATTERN = re.compile(
+    r"CcoMac=(?P<cco_mac>(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2})"
+)
+DATA_PATTERN = re.compile(
+    r"(?P<label>CcoData|StaData)=\[(?P<data>[^\]]*)\]\s*count=(?P<count>\d+)"
 )
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Extract CCO MAC, ccodata and stadata from period_cmp log lines."
+        description="Extract CCO MAC, CcoData and StaData from area_record_frequency_diff log blocks."
     )
     parser.add_argument(
         "inputs",
@@ -41,6 +41,7 @@ def parse_args():
 def expand_inputs(raw_inputs):
     files = []
     seen = set()
+    supported_patterns = ("*.log", "*.txt", "*.TXT")
 
     for raw_input in raw_inputs:
         path = Path(raw_input)
@@ -48,7 +49,14 @@ def expand_inputs(raw_inputs):
         if path.is_file():
             candidates = [path]
         elif path.is_dir():
-            candidates = sorted(p for p in path.rglob("*.log") if p.is_file())
+            candidates = sorted(
+                {
+                    p
+                    for pattern in supported_patterns
+                    for p in path.rglob(pattern)
+                    if p.is_file()
+                }
+            )
         else:
             candidates = [Path(item) for item in sorted(glob.glob(raw_input, recursive=True))]
 
@@ -73,75 +81,144 @@ def values_fit_int16(values):
     return all(-32768 <= value <= 32767 for value in values)
 
 
+def normalize_cco_mac(raw_text):
+    return raw_text.replace(":", "").upper()
+
+
+def report_record_error(message, strict=False):
+    if strict:
+        raise ValueError(message)
+
+    print(f"WARN: {message}", file=sys.stderr)
+    return None, 1
+
+
+def finalize_record(log_path, block):
+    source_line = block["cco_mac_line"] or block["source_line"]
+    missing_fields = []
+
+    if block["cco_mac"] is None:
+        missing_fields.append("CcoMac")
+    if block["cco_data"] is None:
+        missing_fields.append("CcoData")
+    if block["sta_data"] is None:
+        missing_fields.append("StaData")
+
+    if missing_fields:
+        return report_record_error(
+            f"{log_path}:{block['source_line']} incomplete block missing {', '.join(missing_fields)}",
+            strict=block["strict"],
+        )
+
+    try:
+        cco_data = parse_number_list(block["cco_data"])
+    except ValueError as exc:
+        return report_record_error(
+            f"{log_path}:{block['cco_data_line']} invalid CcoData numeric token: {exc}",
+            strict=block["strict"],
+        )
+
+    try:
+        sta_data = parse_number_list(block["sta_data"])
+    except ValueError as exc:
+        return report_record_error(
+            f"{log_path}:{block['sta_data_line']} invalid StaData numeric token: {exc}",
+            strict=block["strict"],
+        )
+
+    cco_count = int(block["cco_count"])
+    sta_count = int(block["sta_count"])
+
+    if len(cco_data) != cco_count:
+        return report_record_error(
+            f"{log_path}:{block['cco_data_line']} CcoData count mismatch: "
+            f"expected {cco_count}, got {len(cco_data)}",
+            strict=block["strict"],
+        )
+
+    if len(sta_data) != sta_count:
+        return report_record_error(
+            f"{log_path}:{block['sta_data_line']} StaData count mismatch: "
+            f"expected {sta_count}, got {len(sta_data)}",
+            strict=block["strict"],
+        )
+
+    if not values_fit_int16(cco_data):
+        return report_record_error(
+            f"{log_path}:{block['cco_data_line']} CcoData contains value outside int16 range",
+            strict=block["strict"],
+        )
+
+    if not values_fit_int16(sta_data):
+        return report_record_error(
+            f"{log_path}:{block['sta_data_line']} StaData contains value outside int16 range",
+            strict=block["strict"],
+        )
+
+    return {
+        "source_log": str(log_path),
+        "source_line": source_line,
+        "cco_mac": normalize_cco_mac(block["cco_mac"]),
+        "cco_data": cco_data,
+        "sta_data": sta_data,
+    }, 0
+
+
 def extract_records(log_path, strict=False):
     records = []
     skipped = 0
+    current_block = None
 
     with log_path.open("r", encoding="utf-8", errors="ignore") as handle:
         for line_no, line in enumerate(handle, 1):
-            match = RECORD_PATTERN.search(line)
+            if BLOCK_MARKER in line:
+                if current_block is not None:
+                    record, skipped_delta = finalize_record(log_path, current_block)
+                    skipped += skipped_delta
+                    if record is not None:
+                        records.append(record)
+
+                current_block = {
+                    "source_line": line_no,
+                    "strict": strict,
+                    "cco_mac": None,
+                    "cco_mac_line": None,
+                    "cco_data": None,
+                    "cco_data_line": None,
+                    "cco_count": None,
+                    "sta_data": None,
+                    "sta_data_line": None,
+                    "sta_count": None,
+                }
+
+            if current_block is None:
+                continue
+
+            match = CCO_MAC_PATTERN.search(line)
+            if match is not None:
+                current_block["cco_mac"] = match.group("cco_mac")
+                current_block["cco_mac_line"] = line_no
+                continue
+
+            match = DATA_PATTERN.search(line)
             if match is None:
                 continue
 
-            try:
-                cco_data = parse_number_list(match.group("cco_data"))
-                sta_data = parse_number_list(match.group("sta_data"))
-            except ValueError as exc:
-                message = f"{log_path}:{line_no} invalid numeric token: {exc}"
-                if strict:
-                    raise ValueError(message) from exc
-                print(f"WARN: {message}", file=sys.stderr)
-                skipped += 1
-                continue
+            label = match.group("label")
+            if label == "CcoData":
+                current_block["cco_data"] = match.group("data")
+                current_block["cco_data_line"] = line_no
+                current_block["cco_count"] = match.group("count")
+            else:
+                current_block["sta_data"] = match.group("data")
+                current_block["sta_data_line"] = line_no
+                current_block["sta_count"] = match.group("count")
 
-            cco_count = int(match.group("cco_count"))
-            sta_count = int(match.group("sta_count"))
-
-            if len(cco_data) != cco_count:
-                message = (
-                    f"{log_path}:{line_no} ccodata count mismatch: "
-                    f"expected {cco_count}, got {len(cco_data)}"
-                )
-                if strict:
-                    raise ValueError(message)
-                print(f"WARN: {message}", file=sys.stderr)
-                skipped += 1
-                continue
-
-            if len(sta_data) != sta_count:
-                message = (
-                    f"{log_path}:{line_no} stadata count mismatch: "
-                    f"expected {sta_count}, got {len(sta_data)}"
-                )
-                if strict:
-                    raise ValueError(message)
-                print(f"WARN: {message}", file=sys.stderr)
-                skipped += 1
-                continue
-
-            if not values_fit_int16(cco_data):
-                message = f"{log_path}:{line_no} ccodata contains value outside int16 range"
-                if strict:
-                    raise ValueError(message)
-                print(f"WARN: {message}", file=sys.stderr)
-                skipped += 1
-                continue
-
-            if not values_fit_int16(sta_data):
-                message = f"{log_path}:{line_no} stadata contains value outside int16 range"
-                if strict:
-                    raise ValueError(message)
-                print(f"WARN: {message}", file=sys.stderr)
-                skipped += 1
-                continue
-
-            records.append({
-                "source_log": str(log_path),
-                "source_line": line_no,
-                "cco_mac": match.group("cco_mac"),
-                "cco_data": cco_data,
-                "sta_data": sta_data,
-            })
+    if current_block is not None:
+        record, skipped_delta = finalize_record(log_path, current_block)
+        skipped += skipped_delta
+        if record is not None:
+            records.append(record)
 
     return records, skipped
 
@@ -205,7 +282,7 @@ def main():
             output_handle.close()
 
     if total_records == 0:
-        print("No period_cmp records found.", file=sys.stderr)
+        print("No area_record_frequency_diff records found.", file=sys.stderr)
         return 1
 
     print(

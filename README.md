@@ -322,7 +322,7 @@ FrequencyDiff = |49.184714 - 49.951248|
 
 ## tests 目录测试说明
 
-`tests/` 目录里的内容主要用于把串口日志中的 `period_cmp` 记录抽取出来，再喂给 `app_area_frequency_calc.c` 中 `#ifdef TEST_CODE` 下的单文件测试入口做回放验证。
+`tests/` 目录里的内容主要用于把日志中的 `area_record_frequency_diff params:` 参数块抽取出来，再喂给 `app_area_frequency_calc.c` 中 `#ifdef TEST_CODE` 下的单文件测试入口做回放验证。
 
 ### 快速运行
 
@@ -340,7 +340,7 @@ bash test.sh
 
 `test.sh` 的执行流程如下：
 
-1. 用 `extract_period_cmp_records.py` 从默认日志 `Serial-COM7_03_11_15_16-025021800021错误.log` 中抽取 `period_cmp` 记录。
+1. 用 `extract_period_cmp_records.py` 从默认日志 `DATA0000.TXT` 中抽取 `area_record_frequency_diff params:` 参数块。
 2. 把抽取结果写入 `tests/bin/period_cmp_records.txt`。
 3. 用 `gcc` 编译 `../app_area_frequency_calc.c`，并打开 `-DTEST_CODE` 与 `-DFEEDER_ZONE_IDENTIFICATION` 宏，生成测试程序 `tests/bin/app_area_frequency_calc_single`。
 4. 将可执行文件复制到 `/tmp/app_area_frequency_calc_single` 后运行，避免在 WSL 下直接执行 `/mnt/c` 上的 ELF 文件。
@@ -348,34 +348,42 @@ bash test.sh
 
 以当前默认日志为例，脚本运行后可以看到这类关键信息：
 
-- 抽取阶段：`64` 条记录被成功导出，`0` 条在抽取阶段被跳过。
-- 计算阶段：汇总结果为 `summary files=1 records=64 ok=63 invalid_param=0 invalid_data=1 mac_table_full=0`。
-- 最终选择结果：`selected_cco_mac=45:53:20:25:00:02`。
+- 抽取阶段：`72` 条记录被成功导出，`0` 条在抽取阶段被跳过。
+- 计算阶段：汇总结果为 `summary files=1 records=72 ok=70 invalid_param=1 invalid_data=1 mac_table_full=0`。
+- 最终选择结果：`selected_cco_mac=45:53:20:25:00:01`。
 
 ### 脚本与样例文件说明
 
 | 文件 | 说明 |
 | --- | --- |
-| `tests/test.sh` | 一键测试入口脚本。默认使用 `Serial-COM7_03_11_15_16-025021800021错误.log` 作为输入，完成“日志抽取 -> 编译测试程序 -> 回放计算”整条链路。 |
-| `tests/extract_period_cmp_records.py` | 日志抽取脚本。负责从日志中识别 `period_cmp` 行，提取 `cco_mac`、`ccodata`、`stadata`，并转换成测试程序可直接读取的 `AREA_FREQ_RECORD_V1` 文本格式。 |
-| `tests/Serial-COM7_03_11_15_16-025021800021错误.log` | 默认回归样例。当前 `test.sh` 就是基于这个日志运行，适合验证算法在包含异常数据时的处理结果。 |
-| `tests/Serial-COM22_03_11_15_16-025021800033成功.log` | 另一份样例日志，可用于手动替换输入做对比测试。当前用抽取脚本处理时，在非 `--strict` 模式下会导出 `64` 条记录，同时跳过 `2` 条格式/数据异常记录。 |
+| `tests/test.sh` | 一键测试入口脚本。默认使用 `DATA0000.TXT` 作为输入，完成“日志抽取 -> 编译测试程序 -> 回放计算”整条链路。 |
+| `tests/extract_period_cmp_records.py` | 日志抽取脚本。负责从日志中识别 `area_record_frequency_diff params:` 参数块，提取 `CcoMac`、`CcoData`、`StaData`，并转换成测试程序可直接读取的 `AREA_FREQ_RECORD_V1` 文本格式。 |
+| `tests/DATA0000.TXT` | 当前默认回归样例。文件中的目标日志格式是一个参数块，典型内容为 `area_record_frequency_diff params:`、`CcoMac=...`、`CcoData=[...] count=N`、`StaData=[...] count=N`。 |
 | `tests/编码规范.md` | 测试目录中的附加说明文档，不参与测试执行。 |
 
 ### `extract_period_cmp_records.py` 用法
 
-脚本支持输入单个日志文件、目录或 glob 模式，输出到文件或标准输出。
+脚本支持输入单个日志文件、目录或 glob 模式，输出到文件或标准输出。目录输入会扫描 `*.log`、`*.txt` 和 `*.TXT` 文件。
+
+当前脚本只解析下面这类日志块：
+
+```text
+area_record_frequency_diff params:
+CcoMac=45:53:20:25:00:02
+CcoData=[...] count=36
+StaData=[...] count=36
+```
 
 示例：
 
 ```bash
 python3 tests/extract_period_cmp_records.py \
-  tests/Serial-COM7_03_11_15_16-025021800021错误.log \
+  tests/DATA0000.TXT \
   -o tests/bin/period_cmp_records.txt
 ```
 
 ```bash
-python3 tests/extract_period_cmp_records.py "tests/*.log" -o tests/bin/all_records.txt
+python3 tests/extract_period_cmp_records.py "tests/*.TXT" -o tests/bin/all_records.txt
 ```
 
 常用参数说明：
@@ -396,16 +404,16 @@ sta_data_count=36
 sta_data=...
 ```
 
-### 手动替换测试输入
+### 手动抽取并回放
 
-如果想换一份日志做测试，最简单的方式是先手动抽取，再把输出文件传给测试程序：
+如果想把抽取和回放拆开执行，最简单的方式是先手动抽取，再把输出文件传给测试程序：
 
 ```bash
 python3 tests/extract_period_cmp_records.py \
-  tests/Serial-COM22_03_11_15_16-025021800033成功.log \
-  -o /tmp/period_cmp_success.txt
+  tests/DATA0000.TXT \
+  -o /tmp/period_cmp_data0000.txt
 
-/tmp/app_area_frequency_calc_single /tmp/period_cmp_success.txt
+/tmp/app_area_frequency_calc_single /tmp/period_cmp_data0000.txt
 ```
 
 这种方式适合对比不同日志下的：
