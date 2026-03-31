@@ -174,7 +174,7 @@ void area_dump_frequency_records(void)
 
         for (DiffIndex = 0U; Record->DiffCount > DiffIndex; DiffIndex++)
         {
-            printf_s((0U == DiffIndex) ? "%.2f" : ", %.2f", Record->DiffValues[DiffIndex]);
+            printf_s((0U == DiffIndex) ? "%f" : ", %f", Record->DiffValues[DiffIndex]);
         }
 
         printf_s("]\n");
